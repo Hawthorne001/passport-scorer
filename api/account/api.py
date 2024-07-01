@@ -4,7 +4,15 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional, cast
 
 import api_logging as logging
-from account.models import Account, AccountAPIKey, Community, Nonce, Customization
+from account.models import (
+    Account,
+    AccountAPIKey,
+    AddressList,
+    AddressListMember,
+    Community,
+    Nonce,
+    Customization,
+)
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.http import HttpResponse
@@ -23,6 +31,10 @@ from scorer_weighted.models import (
 from siwe import SiweMessage, siwe
 
 from .deduplication import Rules
+
+from trusta_labs.api import CgrantsApiKey
+
+secret_key = CgrantsApiKey()
 
 log = logging.getLogger(__name__)
 
@@ -590,12 +602,18 @@ def get_account_customization(request, dashboard_path: str):
         customization = Customization.objects.get(path=dashboard_path)
         scorer = customization.scorer.scorer
 
-        weights = get_default_weights
+        weights = get_default_weights()
 
         if scorer and getattr(scorer, "weightedscorer", None):
             weights = scorer.weightedscorer.weights
         elif scorer and getattr(scorer, "binaryweightedscorer", None):
             weights = scorer.binaryweightedscorer.weights
+
+        weights.update(customization.get_customization_dynamic_weights())
+
+        included_chain_ids = list(
+            customization.included_chain_ids.values_list("chain_id", flat=True)
+        )
 
         return dict(
             key=customization.path,
@@ -630,7 +648,22 @@ def get_account_customization(request, dashboard_path: str):
                 "weights": weights,
                 "id": customization.scorer.id,
             },
+            includedChainIds=included_chain_ids,
         )
 
     except Customization.DoesNotExist:
         raise APIException("Customization not found", status.HTTP_404_NOT_FOUND)
+
+
+@api.get("/allow-list/{str:list}/{str:address}", auth=secret_key)
+def check_on_allow_list(request, list: str, address: str):
+    """
+    Check if an address is on the allow list for a specific round
+    """
+    try:
+        is_member = AddressListMember.objects.filter(
+            list__name=list, address=address
+        ).exists()
+        return {"is_member": is_member}
+    except AddressList.DoesNotExist:
+        return {"is_member": False}

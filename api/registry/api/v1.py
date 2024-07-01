@@ -7,7 +7,12 @@ import requests
 from account.api import UnauthorizedException, create_community_for_account
 
 # --- Deduplication Modules
-from account.models import Account, Community, Nonce, Rules
+from account.models import (
+    Account,
+    Community,
+    Nonce,
+    Rules,
+)
 from ceramic_cache.models import CeramicCache
 from django.conf import settings
 from django.core.cache import cache
@@ -17,7 +22,6 @@ from ninja_extra.exceptions import APIException
 from registry.api import common
 from registry.api.schema import (
     CursorPaginatedHistoricalScoreResponse,
-    CursorPaginatedScoreResponse,
     CursorPaginatedStampCredentialResponse,
     DetailedScoreResponse,
     ErrorMessageResponse,
@@ -55,14 +59,13 @@ from registry.exceptions import (
     api_get_object_or_404,
 )
 from registry.filters import GTCStakeEventsFilter
-from registry.models import Event, GTCStakeEvent, Passport, Score, Stamp
+from registry.models import GTCStakeEvent, Passport, Score
 from registry.tasks import score_passport_passport, score_registry_passport
 from registry.utils import (
     decode_cursor,
     encode_cursor,
     get_signer,
     get_signing_message,
-    permissions_required,
     reverse_lazy_with_query,
 )
 
@@ -219,7 +222,6 @@ async def ahandle_submit_passport(
 
     await ascore_passport(user_community, db_passport, payload.address, score)
     await score.asave()
-
     return DetailedScoreResponse.from_orm(score)
 
 
@@ -310,9 +312,7 @@ async def aget_scorer_by_id(scorer_id: int | str, account: Account) -> Community
                 account,
                 exc_info=True,
             )
-            raise NotFoundApiException(
-                f"No scorer matches the given criteria."
-            ) from exc
+            raise NotFoundApiException("No scorer matches the given criteria.") from exc
 
 
 @router.get(
@@ -667,7 +667,7 @@ def fetch_all_stamp_metadata() -> List[StampDisplayResponse]:
 
             # Store the metadata in the cache, with a timeout of 1 hour
             cache.set("metadata", metadata, 60 * 60)
-        except:
+        except Exception:
             log.exception("Error fetching external metadata")
 
     if metadata is None:
@@ -701,7 +701,7 @@ def fetch_stamp_metadata_for_provider(provider: str):
                 for stamp in group.stamps
             }
             cache.set("metadataByProvider", metadataByProvider, 60 * 60)
-    except:
+    except Exception:
         log.exception("Error fetching external metadata")
         raise InternalServerErrorException(
             "Error fetching external stamp metadata for provider " + provider
@@ -749,5 +749,5 @@ def get_gtc_stake_legacy(request, address: str, round_id: str) -> GtcEventsRespo
         queryset = with_read_db(GTCStakeEvent)
         filtered_queryset = GTCStakeEventsFilter(data=params, queryset=queryset).qs
         return {"results": [obj for obj in filtered_queryset.values()]}
-    except Exception as e:
+    except Exception:
         raise StakingRequestError()

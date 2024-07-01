@@ -1,6 +1,6 @@
 import copy
-from datetime import datetime
-from typing import Dict, List
+from datetime import datetime, timezone
+from typing import Dict
 
 import api_logging as logging
 from account.deduplication.lifo import alifo
@@ -68,9 +68,11 @@ async def aremove_stale_stamps_from_db(passport: Passport, passport_data: dict):
         stamp["credential"]["credentialSubject"]["hash"]
         for stamp in passport_data["stamps"]
     ]
-    await Stamp.objects.filter(passport=passport).exclude(
-        hash__in=current_hashes
-    ).adelete()
+    await (
+        Stamp.objects.filter(passport=passport)
+        .exclude(hash__in=current_hashes)
+        .adelete()
+    )
 
 
 async def aload_passport_data(address: str) -> Dict:
@@ -87,7 +89,7 @@ async def acalculate_score(passport: Passport, community_id: int, score: Score):
     user_community = await Community.objects.aget(pk=community_id)
 
     scorer = await user_community.aget_scorer()
-    scores = await scorer.acompute_score([passport.id])
+    scores = await scorer.acompute_score([passport.id], community_id)
 
     log.info("Scores for address '%s': %s", passport.address, scores)
     scoreData = scores[0]
@@ -98,6 +100,7 @@ async def acalculate_score(passport: Passport, community_id: int, score: Score):
     score.evidence = scoreData.evidence[0].as_dict() if scoreData.evidence else None
     score.error = None
     score.stamp_scores = scoreData.stamp_scores
+    score.expiration_date = scoreData.expiration_date
     log.info("Calculated score: %s", score)
 
 
@@ -160,20 +163,13 @@ async def avalidate_credentials(passport: Passport, passport_data) -> dict:
         log.debug(
             "validating credential did='%s' credential='%s'", did, stamp["credential"]
         )
-        try:
-            # TODO: use some library or https://docs.python.org/3/library/datetime.html#datetime.datetime.fromisoformat to
-            # parse iso timestamps
-            stamp_expiration_date = datetime.strptime(
-                stamp["credential"]["expirationDate"], "%Y-%m-%dT%H:%M:%S.%fZ"
-            )
-        except ValueError:
-            stamp_expiration_date = datetime.strptime(
-                stamp["credential"]["expirationDate"], "%Y-%m-%dT%H:%M:%SZ"
-            )
 
         is_issuer_verified = verify_issuer(stamp)
         # check that expiration date is not in the past
-        stamp_is_expired = stamp_expiration_date < datetime.now()
+        stamp_expiration_date = datetime.fromisoformat(
+            stamp["credential"]["expirationDate"]
+        )
+        stamp_is_expired = stamp_expiration_date < datetime.now(timezone.utc)
         stamp_return_errors = []
         valid = False
         if not stamp_is_expired and is_issuer_verified:
@@ -243,6 +239,7 @@ async def ascore_passport(
             score.score = None
             score.status = Score.Status.ERROR
             score.last_score_timestamp = None
+            score.expiration_date = None
             score.evidence = None
             score.error = e.detail
     except Exception as e:
@@ -257,5 +254,6 @@ async def ascore_passport(
             score.score = None
             score.status = Score.Status.ERROR
             score.last_score_timestamp = None
+            score.expiration_date = None
             score.evidence = None
             score.error = str(e)

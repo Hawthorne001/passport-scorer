@@ -379,6 +379,39 @@ class Community(models.Model):
             return await BinaryWeightedScorer.objects.aget(scorer_ptr_id=scorer.id)
 
 
+alphanumeric = RegexValidator(
+    r"^[0-9a-zA-Z]*$", "Only alphanumeric characters are allowed."
+)
+
+
+class AddressList(models.Model):
+    name = models.CharField(
+        max_length=100,
+        db_index=True,
+        unique=True,
+        null=False,
+        blank=False,
+        validators=[alphanumeric],
+    )
+
+    def __str__(self):
+        return f"AllowList - {self.name}"
+
+
+class AddressListMember(models.Model):
+    address = EthAddressField(null=False, blank=False, max_length=100, db_index=True)
+    list = models.ForeignKey(
+        AddressList,
+        related_name="addresses",
+        on_delete=models.CASCADE,
+        null=False,
+        db_index=True,
+    )
+
+    class Meta:
+        unique_together = ["address", "list"]
+
+
 class Customization(models.Model):
     class CustomizationLogoBackgroundType(models.TextChoices):
         DOTS = "DOTS"
@@ -405,7 +438,7 @@ class Customization(models.Model):
         blank=True,
         unique=False,
     )
-    scorer = models.ForeignKey(Community, on_delete=models.PROTECT)
+    scorer = models.OneToOneField(Community, on_delete=models.PROTECT)
     use_custom_dashboard_panel = models.BooleanField(default=False)
 
     # CustomizationTheme
@@ -452,3 +485,42 @@ class Customization(models.Model):
         blank=True,
         null=True,
     )
+
+    def get_customization_dynamic_weights(self) -> dict:
+        weights = {}
+        for allow_list in self.allow_lists.all():
+            weights[f"AllowList#{allow_list.address_list.name}"] = str(
+                allow_list.weight
+            )
+
+        return weights
+
+    async def aget_customization_dynamic_weights(self) -> dict:
+        weights = {}
+        async for allow_list in self.allow_lists.all():
+            address_list = await AddressList.objects.aget(pk=allow_list.address_list_id)
+            weights[f"AllowList#{address_list.name}"] = str(allow_list.weight)
+
+        return weights
+
+
+class IncludedChainId(models.Model):
+    chain_id = models.CharField(max_length=200, blank=False, null=False)
+    customization = models.ForeignKey(
+        Customization, on_delete=models.CASCADE, related_name="included_chain_ids"
+    )
+
+    class Meta:
+        unique_together = ["chain_id", "customization"]
+
+
+class AllowList(models.Model):
+    address_list = models.ForeignKey(
+        AddressList, on_delete=models.PROTECT, related_name="allow_lists"
+    )
+
+    customization = models.ForeignKey(
+        Customization, on_delete=models.PROTECT, related_name="allow_lists"
+    )
+
+    weight = models.DecimalField(default=0.0, max_digits=7, decimal_places=4)
