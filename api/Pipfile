@@ -4,7 +4,7 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-django = "==4.2.6"
+django = "==4.2.15"
 markdown = "*"
 django-extensions = "*"
 didkit = "*"
